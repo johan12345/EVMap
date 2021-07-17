@@ -8,15 +8,14 @@ import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.location.Location
 import android.net.Uri
-import android.os.Bundle
 import android.os.IBinder
-import android.os.ResultReceiver
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.Session
+import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.*
 import androidx.car.app.model.Distance.UNIT_KILOMETERS
 import androidx.car.app.validation.HostValidator
@@ -54,6 +53,10 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
+
+
+val CarContext.constraintManager
+    get() = getCarService(CarContext.CONSTRAINT_SERVICE) as ConstraintManager
 
 
 interface LocationAwareScreen {
@@ -231,32 +234,7 @@ class PermissionScreen(ctx: CarContext, val session: EVMapSession) : Screen(ctx)
                     .setTitle(carContext.getString(R.string.grant_on_phone))
                     .setBackgroundColor(CarColor.PRIMARY)
                     .setOnClickListener(ParkedOnlyOnClickListener.create {
-                        val intent = Intent(carContext, PermissionActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            .putExtra(
-                                PermissionActivity.EXTRA_RESULT_RECEIVER,
-                                object : ResultReceiver(null) {
-                                    override fun onReceiveResult(
-                                        resultCode: Int,
-                                        resultData: Bundle?
-                                    ) {
-                                        if (resultData!!.getBoolean(PermissionActivity.RESULT_GRANTED)) {
-                                            session.bindLocationService()
-                                            screenManager.push(
-                                                WelcomeScreen(
-                                                    carContext,
-                                                    session
-                                                )
-                                            )
-                                        }
-                                    }
-                                })
-                        carContext.startActivity(intent)
-                        CarToast.makeText(
-                            carContext,
-                            R.string.opened_on_phone,
-                            CarToast.LENGTH_LONG
-                        ).show()
+                        requestPermissions()
                     })
                     .build()
             )
@@ -269,6 +247,23 @@ class PermissionScreen(ctx: CarContext, val session: EVMapSession) : Screen(ctx)
                     .build(),
             )
             .build()
+    }
+
+    private fun requestPermissions() {
+        val permission = Manifest.permission.ACCESS_FINE_LOCATION
+        carContext.requestPermissions(listOf(permission)) { granted, rejected ->
+            if (granted.contains(permission)) {
+                session.bindLocationService()
+                screenManager.push(
+                    WelcomeScreen(
+                        carContext,
+                        session
+                    )
+                )
+            } else {
+                requestPermissions()
+            }
+        }
     }
 }
 
@@ -293,7 +288,8 @@ class MapScreen(ctx: CarContext, val session: EVMapSession, val favorites: Boole
     private val availabilityUpdateThreshold = Duration.ofMinutes(1)
     private var availabilities: MutableMap<Long, Pair<ZonedDateTime, ChargeLocationStatus>> =
         HashMap()
-    private val maxRows = 6
+    private val maxRows =
+        ctx.constraintManager.getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_PLACE_LIST)
 
     override fun onGetTemplate(): Template {
         session.mapScreen = this
@@ -439,7 +435,7 @@ class MapScreen(ctx: CarContext, val session: EVMapSession, val favorites: Boole
                     )
                     chargers = response.data?.filterIsInstance(ChargeLocation::class.java)
                     chargers?.let {
-                        if (it.size < 6) {
+                        if (it.size < maxRows) {
                             // try again with larger radius
                             val response = api.getChargepointsRadius(
                                 getReferenceData(),
@@ -524,7 +520,10 @@ class ChargerDetailScreen(ctx: CarContext, val chargerSparse: ChargeLocation) : 
         createApi(prefs.dataSource, ctx)
     }
 
-    private val iconGen = ChargerIconGenerator(carContext, null, oversize = 1.4f, height = 64)
+    private val imageSize = 128  // images should be 128dp according to docs
+
+    private val iconGen =
+        ChargerIconGenerator(carContext, null, oversize = 1.4f, height = imageSize)
 
     override fun onGetTemplate(): Template {
         if (charger == null) loadCharger()
@@ -661,7 +660,8 @@ class ChargerDetailScreen(ctx: CarContext, val chargerSparse: ChargeLocation) : 
 
                 val photo = charger?.photos?.firstOrNull()
                 photo?.let {
-                    val size = (carContext.resources.displayMetrics.density * 64).roundToInt()
+                    val size =
+                        (carContext.resources.displayMetrics.density * imageSize).roundToInt()
                     val url = photo.getUrl(size = size)
                     val request = ImageRequest.Builder(carContext).data(url).build()
                     this@ChargerDetailScreen.photo =
