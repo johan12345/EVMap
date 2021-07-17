@@ -15,6 +15,7 @@ import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.Session
+import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.*
 import androidx.car.app.model.Distance.UNIT_KILOMETERS
 import androidx.car.app.validation.HostValidator
@@ -52,6 +53,10 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
+
+
+val CarContext.constraintManager
+    get() = getCarService(CarContext.CONSTRAINT_SERVICE) as ConstraintManager
 
 
 interface LocationAwareScreen {
@@ -283,7 +288,8 @@ class MapScreen(ctx: CarContext, val session: EVMapSession, val favorites: Boole
     private val availabilityUpdateThreshold = Duration.ofMinutes(1)
     private var availabilities: MutableMap<Long, Pair<ZonedDateTime, ChargeLocationStatus>> =
         HashMap()
-    private val maxRows = 6
+    private val maxRows =
+        ctx.constraintManager.getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_PLACE_LIST)
 
     override fun onGetTemplate(): Template {
         session.mapScreen = this
@@ -429,7 +435,7 @@ class MapScreen(ctx: CarContext, val session: EVMapSession, val favorites: Boole
                     )
                     chargers = response.data?.filterIsInstance(ChargeLocation::class.java)
                     chargers?.let {
-                        if (it.size < 6) {
+                        if (it.size < maxRows) {
                             // try again with larger radius
                             val response = api.getChargepointsRadius(
                                 getReferenceData(),
